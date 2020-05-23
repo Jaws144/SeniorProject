@@ -1,0 +1,251 @@
+# Python 3
+import serial
+import RPi.GPIO as GPIO
+import time
+from time import perf_counter
+import csv
+
+GPIO.setmode(GPIO.BOARD)
+#for vibration motor
+pin_number = 15
+GPIO.setup(pin_number, GPIO.OUT)
+
+#for servo
+servo_pin = 11
+GPIO.setup(servo_pin, GPIO.OUT)
+frequency_hertz = 50
+ms_per_cycle = 1000 / frequency_hertz
+middlePos = 1.5
+middleDuty = middlePos * 100 / ms_per_cycle #neutral position of the servo
+pwm = GPIO.PWM(servo_pin, frequency_hertz)
+pwm.start(middleDuty) #sets servo to neutral position
+time.sleep(1) #gives time for the servo to finish moving, just in case
+
+port = "/dev/ttyACM0"  # port of arduino
+
+# creates a csv file to store the load cell data- force and time
+with open('loadData.csv', 'w', newline='') as cell_data:
+    writer = csv.writer(cell_data)
+    writer.writerow(["Force", "Time"])
+
+# sets up serial port
+s1 = serial.Serial(port, 9600, timeout=1)
+s1.flushInput()  # clears serial port
+
+
+#Functions called in a main function
+def vibeOn():
+    GPIO.output(pin_number, 1)
+
+
+def vibeOff():
+    GPIO.output(pin_number, 0)
+
+
+# Variables for the vibration functions determines how long the motor is on in seconds, out of a cycle of three seconds.
+a = 1/2
+b = 1
+c = 3/2
+d = 2
+e = 5/2
+f = 3
+
+
+def weightCategory(z):
+    vibeOff()
+    global time2
+    time2 = perf_counter()
+    global which_loop
+    which_loop = "off"
+    global onTime
+    onTime = z
+
+
+which_loop = "new"
+
+
+def vibrate(rawLoad):
+    Load_1 = rawLoad[1:]  #Returns data without the identifying character
+    offset = 183100  #determined experimentally, "zeros" the scale
+    ratio =  56840 #number/ pound, determined experimentally
+    Load = (int(Load_1) - offset) / ratio
+    print(Load)
+    loadTime = perf_counter()  #for raw data analysis
+    # Saves Load and time to CSV
+    with open('loadData.csv', 'a', newline='') as cell_data2:
+        writer2 = csv.writer(cell_data2)
+        writer2.writerow([Load, loadTime])
+    # Decides the vibration pattern
+    if which_loop == "new":
+        if 0 <= Load < 2:
+            global which_loop
+            which_loop = "0_2"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        elif 2 <= Load < 4:
+            global which_loop
+            which_loop = "2_4"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        elif 4 <= Load < 6:
+            global which_loop
+            which_loop = "4_6"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        elif 6 <= Load < 8:
+            global which_loop
+            which_loop = "6_8"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        elif 8 <= Load < 10:
+            global which_loop
+            which_loop = "8_10"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        elif Load >= 10:
+            global which_loop
+            which_loop = "10+"
+            global time0
+            time0 = perf_counter()
+            vibeOn()
+            return
+        else:
+            return
+    elif which_loop == "0_2":
+        time1 = perf_counter()
+        if (time1 - time0) > (a):
+            weightCategory(a)
+            return
+        else:
+            return
+    elif which_loop == "2_4":
+        time1 = perf_counter()
+        if (time1 - time0) > (b):
+            weightCategory(b)
+            return
+        else:
+            return
+    elif which_loop == "4_6":
+        time1 = perf_counter()
+        if (time1 - time0) > (c):
+            weightCategory(c)
+            return
+        else:
+            return
+    elif which_loop == "6_8":
+        time1 = perf_counter()
+        if (time1 - time0) > (d):
+            weightCategory(d)
+            return
+        else:
+            return
+    elif which_loop == "8_10":
+        time1 = perf_counter()
+        if (time1 - time0) > (e):
+            weightCategory(e)
+            return
+        else:
+            return
+    elif which_loop == "10+":
+        time1 = perf_counter()
+        if (time1 - time0) > (f):
+            weightCategory(f)
+            return
+        else:
+            return
+    elif which_loop == "off":
+        time3 = perf_counter()
+        if (time3 - time2) >= (3 - onTime):
+            global which_loop
+            which_loop = "new"
+            return
+        else:
+            return
+
+    else:
+        return
+
+servoPos = 1.5
+def incServo(incPos): #Determins by what increment the servo moves
+    global servoPos
+    servoPos = servoPos + incPos
+    dutyCyclePer = servoPos * 100 / ms_per_cycle
+    pwm.start(dutyCyclePer)
+
+# Determined through individual calibration. Thresholds to determine how quickly the hand opens or closes. They are the same "percentages" used for percentFlex.
+q0 = 15
+q1 = 30
+
+# determined through individual calibration. Average values for sustained activation of muscle group.
+maxFlex = 450
+maxExten = 250
+
+def moveServo(rawFlex, rawExten):
+    flex = rawFlex[1:]
+    exten = rawExten[1:]
+    percentFlex = int(flex) *100 / maxFlex #Takes the "percentage" of the maximum value for the muscle group
+    percentExten = int(exten) * 100 / maxExten
+    value = percentFlex - percentExten
+    if value > q1:  #close
+        incServo(0.024)
+    elif q0 < value <= q1: #slow close
+        incServo(0.016)
+    elif -q0 <= value <= q0: #Servo maintains its position
+        return
+    elif -q0 > value >= -q1: #slow open
+        incServo(-0.016)
+    elif value < -q1: #open
+        incServo(-0.024)
+    else:
+        return
+
+sTime0 = perf_counter() #will be used to make the servo adjust position every 1/10 second
+
+while True:
+    senList = []
+    x = 0
+    lData = ""
+    fData = ""
+    eData = ""
+    while x <= 2: #gets three pieces of data
+        if s1.inWaiting() > 0: #reads from serial port
+            inputValue = s1.readline()
+            try:
+                inputValue = str(inputValue,'ascii')
+            except UnicodeDecodeError:
+                inputValue = 'x' 
+            if inputValue[0] == 'E' or inputValue[0] == 'L' or inputValue[0] == 'F':
+                senList.append(inputValue)
+                x = x + 1
+        else:
+            print("No data available")  # hopefully the timeout in the serial read will prevent this from getting stuck here if serial is disconnected
+    typeList = []
+    for dataType in senList:
+        char = dataType[0]
+        typeList.append(char)
+        if char == "L":
+            lData = dataType
+        elif char == "F":
+            fData = dataType
+        elif char == "E":
+            eData = dataType
+    # This is where everything is called after checking that all the data is there
+    if "L" in typeList and "F" in typeList and "E" in typeList:
+        vibrate(lData) #controls vibration motor
+        sTime1 = perf_counter()
+        if sTime1 - sTime0 > (1/10):
+            moveServo(fData, eData) #updates servo position every 1/10 second
+            global sTime0
+            sTime0 = perf_counter()
+    else:
+        print("Not all data types in typeList")
